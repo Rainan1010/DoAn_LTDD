@@ -6,7 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
-@Database(entities = [SavingsGoal::class, DepositLog::class, NotificationLog::class, Category::class, User::class], version = 3, exportSchema = false)
+// [SỬA Ở ĐÂY] Thêm User::class và đổi version = 4
+@Database(entities = [SavingsGoal::class, DepositLog::class, NotificationLog::class, Category::class, User::class], version = 4, exportSchema = false)
 @TypeConverters(DateConverter::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -26,7 +27,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "savings_app_database"
                 )
-                    .fallbackToDestructiveMigration() // Xóa DB cũ nếu version thay đổi (chỉ dùng lúc dev)
+                    .fallbackToDestructiveMigration() // Dòng này sẽ xóa dữ liệu cũ để tạo bảng Users mới
                     .build()
                 INSTANCE = instance
                 instance

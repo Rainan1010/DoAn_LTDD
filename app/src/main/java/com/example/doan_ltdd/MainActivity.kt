@@ -141,6 +141,11 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                     drawerLayout.closeDrawer(GravityCompat.START)
                 }
+                R.id.nav_about -> {
+                    val intent = Intent(this, AboutActivity::class.java)
+                    startActivity(intent)
+                    drawerLayout.closeDrawer(GravityCompat.START)
+                }
             }
             true
         }
