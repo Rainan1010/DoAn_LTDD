@@ -92,16 +92,6 @@
                         android:text="Hằng ngày"
                         android:textSize="16sp"/>
 
-                    <TextView
-                        android:id="@+id/tvTimePicker"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="09:00"
-                        android:textStyle="bold"
-                        android:padding="8dp"
-                        android:background="?attr/selectableItemBackground"
-                        android:layout_marginEnd="8dp"/>
-
                 </LinearLayout>
 
             </LinearLayout>

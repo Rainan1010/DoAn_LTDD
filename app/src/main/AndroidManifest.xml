@@ -12,18 +12,22 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DoAn_LTDD">
         <activity
-            android:name=".MainActivity"
+            android:name=".LoginActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".NotificationActivity" />
+
         <activity
-            android:name=".HistoryActivity"
+            android:name=".MainActivity"
             android:exported="false" />
+
+        <activity android:name=".HistoryActivity" />
         <activity android:name=".StatisticsActivity" />
+        <activity android:name=".SettingsActivity" />
+        <activity android:name=".NotificationActivity" />
     </application>
 
 </manifest>

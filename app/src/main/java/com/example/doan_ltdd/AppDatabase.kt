@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
-@Database(entities = [SavingsGoal::class, DepositLog::class, NotificationLog::class, Category::class], version = 3, exportSchema = false)
+@Database(entities = [SavingsGoal::class, DepositLog::class, NotificationLog::class, Category::class, User::class], version = 4, exportSchema = false)
 @TypeConverters(DateConverter::class)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun savingsDao(): SavingsDAO
     abstract fun notificationDao(): NotificationDAO
     abstract fun categoryDao(): CategoryDAO
+    abstract fun userDao(): UserDAO
 
     companion object {
         @Volatile
