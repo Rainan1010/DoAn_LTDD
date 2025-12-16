@@ -1,8 +1,11 @@
 package com.example.doan_ltdd
 
 import android.app.DatePickerDialog
-import android.app.TimePickerDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -13,6 +16,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,17 +24,14 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 import java.util.Calendar
-import java.util.concurrent.TimeUnit
-
 class MainActivity : AppCompatActivity() {
 
     private lateinit var database: AppDatabase
@@ -42,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var navigationView: NavigationView
     private lateinit var btnNotification: ImageView
     private lateinit var btnSearch: ImageView
+    private var currentUser: User? = null
+    private var currentUsername: String = ""
 
     // Biến lưu danh sách gốc để phục vụ chức năng tìm kiếm/lọc
     private var originalGoals: List<SavingsGoal> = listOf()
@@ -71,10 +74,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         database = AppDatabase.getDatabase(this)
-
+        currentUsername = intent.getStringExtra("USERNAME_KEY") ?: ""
         initializeSampleData()
         setControl()
         setEvent()
+        checkAndSendNotifications()
+        loadUserInfo()
     }
 
     private fun setControl() {
@@ -131,6 +136,11 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                     drawerLayout.closeDrawer(GravityCompat.START)
                 }
+                R.id.nav_settings -> {
+                    val intent = Intent(this, SettingsActivity::class.java)
+                    startActivity(intent)
+                    drawerLayout.closeDrawer(GravityCompat.START)
+                }
             }
             true
         }
@@ -140,7 +150,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        setupWorker()
     }
 
     // --- DIALOG THÊM / SỬA MỤC TIÊU ---
@@ -156,27 +165,25 @@ class MainActivity : AppCompatActivity() {
         val btnSave = dialogView.findViewById<Button>(R.id.btnSave)
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancel)
         val spinnerCategory = dialogView.findViewById<Spinner>(R.id.spinnerCategory)
-        val btnAddCategory = dialogView.findViewById<ImageView>(R.id.btnAddCategory) // Nút thêm Category mới
+        val btnAddCategory = dialogView.findViewById<ImageView>(R.id.btnAddCategory)
         val spinnerPriority = dialogView.findViewById<Spinner>(R.id.spinnerPriority)
         val etDeadline = dialogView.findViewById<EditText>(R.id.etDeadline)
 
-        // 2. Setup Priority Spinner (Cố định)
+        // 2. Setup Priority Spinner
         val priorities = listOf("Thấp", "Trung bình", "Cao")
         spinnerPriority.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, priorities)
 
-        // 3. Setup Category Spinner (Động từ DB)
+        // 3. Setup Category Spinner
         val categoryList = mutableListOf<String>()
         val categoryAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, categoryList)
         spinnerCategory.adapter = categoryAdapter
 
-        // Lấy danh sách category từ DB
         lifecycleScope.launch {
             database.categoryDao().getAllCategories().collect { categories ->
                 categoryList.clear()
                 categoryList.addAll(categories.map { it.name })
                 categoryAdapter.notifyDataSetChanged()
 
-                // Nếu đang Edit, set lại selection
                 if (goalToEdit != null) {
                     val index = categoryList.indexOf(goalToEdit.category)
                     if (index >= 0) spinnerCategory.setSelection(index)
@@ -184,7 +191,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Xử lý nút thêm category mới
         btnAddCategory.setOnClickListener {
             showAddCategoryDialog()
         }
@@ -198,8 +204,6 @@ class MainActivity : AppCompatActivity() {
             tvDialogTitle.text = "Chỉnh Sửa Mục Tiêu"
             etGoalName.setText(goalToEdit.name)
             etTargetAmount.setText(String.format("%.0f", goalToEdit.targetAmount))
-
-            // Load icon cũ
             selectedIconId = goalToEdit.iconResId
             ivGoalIcon.setImageResource(selectedIconId)
 
@@ -209,11 +213,9 @@ class MainActivity : AppCompatActivity() {
             selectedDate = goalToEdit.deadline
             etDeadline.setText("${selectedDate.dayOfMonth}/${selectedDate.monthValue}/${selectedDate.year}")
         } else {
-            // Mặc định hiển thị ngày
             etDeadline.setText("${selectedDate.dayOfMonth}/${selectedDate.monthValue}/${selectedDate.year}")
         }
 
-        // Xử lý chọn ngày
         etDeadline.setOnClickListener {
             val calendar = Calendar.getInstance()
             if (goalToEdit != null) calendar.set(goalToEdit.deadline.year, goalToEdit.deadline.monthValue - 1, goalToEdit.deadline.dayOfMonth)
@@ -223,7 +225,6 @@ class MainActivity : AppCompatActivity() {
             }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
         }
 
-        // Xử lý chọn Icon
         ivGoalIcon.setOnClickListener {
             val iconAdapter = object : ArrayAdapter<Int>(this, android.R.layout.select_dialog_item, availableIcons) {
                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -234,7 +235,6 @@ class MainActivity : AppCompatActivity() {
                     return view
                 }
             }
-
             AlertDialog.Builder(this)
                 .setTitle("Chọn biểu tượng")
                 .setAdapter(iconAdapter) { dialogInterface, which ->
@@ -246,11 +246,10 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        // Xử lý nút LƯU
         btnSave.setOnClickListener {
             val name = etGoalName.text.toString()
             val amountStr = etTargetAmount.text.toString()
-            val selectedCategory = spinnerCategory.selectedItem?.toString() ?: "Khác" // Phòng trường hợp chưa có category nào
+            val selectedCategory = spinnerCategory.selectedItem?.toString() ?: "Khác"
 
             if (name.isBlank() || amountStr.isBlank()) {
                 Toast.makeText(this, "Vui lòng nhập tên và số tiền!", Toast.LENGTH_SHORT).show()
@@ -259,7 +258,6 @@ class MainActivity : AppCompatActivity() {
 
             lifecycleScope.launch {
                 if (goalToEdit == null) {
-                    // --- THÊM MỚI ---
                     val newGoal = SavingsGoal(
                         name = name,
                         targetAmount = amountStr.toDouble(),
@@ -271,15 +269,16 @@ class MainActivity : AppCompatActivity() {
                     database.savingsDao().insertGoal(newGoal)
                     Toast.makeText(this@MainActivity, "Đã thêm mục tiêu!", Toast.LENGTH_SHORT).show()
                 } else {
-                    // --- CẬP NHẬT ---
-                    goalToEdit.name = name
-                    goalToEdit.targetAmount = amountStr.toDouble()
-                    goalToEdit.category = selectedCategory
-                    goalToEdit.priority = spinnerPriority.selectedItem.toString()
-                    goalToEdit.deadline = selectedDate
-                    goalToEdit.iconResId = selectedIconId
-
-                    database.savingsDao().updateGoal(goalToEdit)
+                    // Update: Tạo bản sao để tránh lỗi reference trong Adapter
+                    val updatedGoal = goalToEdit.copy(
+                        name = name,
+                        targetAmount = amountStr.toDouble(),
+                        category = selectedCategory,
+                        priority = spinnerPriority.selectedItem.toString(),
+                        deadline = selectedDate,
+                        iconResId = selectedIconId
+                    )
+                    database.savingsDao().updateGoal(updatedGoal)
                     Toast.makeText(this@MainActivity, "Đã cập nhật thành công!", Toast.LENGTH_SHORT).show()
                 }
                 dialog.dismiss()
@@ -306,7 +305,6 @@ class MainActivity : AppCompatActivity() {
                     lifecycleScope.launch {
                         database.categoryDao().insert(Category(newCategoryName))
                         Toast.makeText(this@MainActivity, "Đã thêm danh mục: $newCategoryName", Toast.LENGTH_SHORT).show()
-                        // Flow sẽ tự update spinner ở dialog cha
                     }
                 }
             }
@@ -325,16 +323,14 @@ class MainActivity : AppCompatActivity() {
         val btnSearchAction = dialogView.findViewById<Button>(R.id.btnPerformSearch)
         val btnReset = dialogView.findViewById<Button>(R.id.btnResetSearch)
 
-        // Setup Category Spinner cho Search (Thêm "Tất cả")
         val categoryList = mutableListOf<String>()
         val catAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, categoryList)
         spinnerCategory.adapter = catAdapter
 
-        // Lấy danh sách category hiện có
         lifecycleScope.launch {
             database.categoryDao().getAllCategories().collect { categories ->
                 categoryList.clear()
-                categoryList.add("Tất cả") // Luôn có tùy chọn này đầu tiên
+                categoryList.add("Tất cả")
                 categoryList.addAll(categories.map { it.name })
                 catAdapter.notifyDataSetChanged()
             }
@@ -387,23 +383,21 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
-        // Trong MainActivity.kt -> showDepositDialog
-
         btnConfirmDeposit.setOnClickListener {
             val amountStr = etDepositAmount.text.toString()
             if (amountStr.isNotBlank()) {
                 val amount = amountStr.toDouble()
 
+                // Tạo bản sao mới để update UI correctly
                 val updatedGoal = goal.copy(currentAmount = goal.currentAmount + amount)
 
                 val log = DepositLog(
-                    goalId = updatedGoal.id, // Dùng id của goal
+                    goalId = updatedGoal.id,
                     goalName = updatedGoal.name,
                     amount = amount
                 )
 
                 lifecycleScope.launch {
-                    // Update object mới vào DB
                     database.savingsDao().updateGoal(updatedGoal)
                     database.savingsDao().insertLog(log)
 
@@ -462,18 +456,16 @@ class MainActivity : AppCompatActivity() {
         val rbMonthly = dialogView.findViewById<RadioButton>(R.id.rbMonthly)
         val rbDaily = dialogView.findViewById<RadioButton>(R.id.rbDaily)
         val spinnerDayOfMonth = dialogView.findViewById<Spinner>(R.id.spinnerDayOfMonth)
-        val tvTimePicker = dialogView.findViewById<TextView>(R.id.tvTimePicker)
         val btnSave = dialogView.findViewById<Button>(R.id.btnSaveNoti)
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelNoti)
+
+        // Đã xóa tvTimePicker ở đây
 
         val days = (1..31).map { "Ngày $it" }
         val spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, days)
         spinnerDayOfMonth.adapter = spinnerAdapter
 
         switchNotification.isChecked = goal.isReminderEnabled
-        var tempHour = goal.reminderHour
-        var tempMinute = goal.reminderMinute
-        tvTimePicker.text = String.format("%02d:%02d", tempHour, tempMinute)
 
         if (goal.reminderFrequency == "MONTHLY") {
             rbMonthly.isChecked = true
@@ -492,7 +484,7 @@ class MainActivity : AppCompatActivity() {
             rbMonthly.isEnabled = isEnabled
             rbDaily.isEnabled = isEnabled
             spinnerDayOfMonth.isEnabled = isEnabled && rbMonthly.isChecked
-            tvTimePicker.isEnabled = isEnabled && rbDaily.isChecked
+            // Không còn tvTimePicker để enable/disable
         }
         updateUIState(switchNotification.isChecked)
 
@@ -507,28 +499,27 @@ class MainActivity : AppCompatActivity() {
             updateUIState(true)
         }
 
-        tvTimePicker.setOnClickListener {
-            TimePickerDialog(this, { _, hourOfDay, minute ->
-                tempHour = hourOfDay
-                tempMinute = minute
-                tvTimePicker.text = String.format("%02d:%02d", tempHour, tempMinute)
-            }, tempHour, tempMinute, true).show()
-        }
+        // Đã xóa sự kiện click tvTimePicker
 
         btnSave.setOnClickListener {
-            goal.isReminderEnabled = switchNotification.isChecked
-            if (goal.isReminderEnabled) {
+            // Tạo bản sao mới để update
+            val updatedGoal = goal.copy(
+                isReminderEnabled = switchNotification.isChecked
+            )
+
+            if (updatedGoal.isReminderEnabled) {
                 if (rbMonthly.isChecked) {
-                    goal.reminderFrequency = "MONTHLY"
-                    goal.reminderDayOfMonth = spinnerDayOfMonth.selectedItemPosition + 1
+                    updatedGoal.reminderFrequency = "MONTHLY"
+                    updatedGoal.reminderDayOfMonth = spinnerDayOfMonth.selectedItemPosition + 1
                 } else {
-                    goal.reminderFrequency = "DAILY"
-                    goal.reminderHour = tempHour
-                    goal.reminderMinute = tempMinute
+                    updatedGoal.reminderFrequency = "DAILY"
+                    // Không lưu reminderHour/Minute riêng lẻ nữa
+                    // Worker sẽ tự lấy giờ từ Global Settings
                 }
             }
+
             lifecycleScope.launch {
-                database.savingsDao().updateGoal(goal)
+                database.savingsDao().updateGoal(updatedGoal)
                 Toast.makeText(this@MainActivity, "Đã lưu cài đặt thông báo!", Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
             }
@@ -538,31 +529,20 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun setupWorker() {
-        val workRequest = PeriodicWorkRequestBuilder<ReminderWorker>(15, TimeUnit.MINUTES).build()
-        WorkManager.getInstance(this).enqueue(workRequest)
-    }
-
     private fun initializeSampleData() {
         lifecycleScope.launch(Dispatchers.IO) {
             val savingsDao = database.savingsDao()
             val categoryDao = database.categoryDao()
-            val notificationDao = database.notificationDao() // Đừng quên DAO này
+            val notificationDao = database.notificationDao()
 
-            // 1. Khởi tạo danh mục mẫu (Lấy từ SampleDataProvider để đồng bộ)
             if (categoryDao.getCount() == 0) {
-                // SỬ DỤNG HÀM MỚI TRONG SampleDataProvider
                 val defaultCategories = SampleDataProvider.getAllCategories()
                 defaultCategories.forEach { name ->
                     categoryDao.insert(Category(name))
                 }
-                Log.d("DB_INIT", "Đã khởi tạo danh mục mẫu")
             }
 
-            // 2. Khởi tạo Goals, Logs, Notifications mẫu
             if (savingsDao.getCount() == 0) {
-                Log.d("DB_INIT", "Database trống, bắt đầu thêm dữ liệu mẫu...")
-
                 val goals = SampleDataProvider.getSavingsGoals()
                 val deposits = SampleDataProvider.getDepositLogs(goals)
                 val notifications = SampleDataProvider.getNotificationLogs()
@@ -571,14 +551,179 @@ class MainActivity : AppCompatActivity() {
                 savingsDao.insertAllDeposits(deposits)
                 notificationDao.insertAll(notifications)
 
-                Log.d("DB_INIT", "Đã thêm dữ liệu mẫu thành công!")
-
-                // Cập nhật lại UI trên Main Thread
                 withContext(Dispatchers.Main) {
-                    // Refresh lại list nếu cần (thường Flow sẽ tự lo việc này)
                     Toast.makeText(this@MainActivity, "Đã khởi tạo dữ liệu mẫu!", Toast.LENGTH_SHORT).show()
                 }
             }
         }
+    }
+    private fun checkAndSendNotifications() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val goals = database.savingsDao().getAllGoalsList()
+            val now = LocalDateTime.now()
+            val startOfDay = now.withHour(0).withMinute(0).withSecond(0).withNano(0)
+
+            // Lấy giờ cài đặt chung
+            val sharedPref = getSharedPreferences("AppPreferences", Context.MODE_PRIVATE)
+            val globalHour = sharedPref.getInt("global_hour", 9)
+            val globalMinute = sharedPref.getInt("global_minute", 0)
+
+            goals.forEach { goal ->
+                // 1. LOGIC NHẮC NHỞ ĐỊNH KỲ
+                if (goal.isReminderEnabled) {
+                    var shouldNotify = false
+
+                    // Logic mới: "Đã quá giờ hẹn chưa?" thay vì "Có đúng giờ hẹn không?"
+                    // Ví dụ: Hẹn 9h00, mở app lúc 9h30 -> Vẫn báo (nếu chưa báo)
+                    // Hẹn 9h00, mở app lúc 8h30 -> Chưa báo
+
+                    val isPastTime = (now.hour > globalHour) || (now.hour == globalHour && now.minute >= globalMinute)
+
+                    if (goal.reminderFrequency == "DAILY") {
+                        if (isPastTime) {
+                            shouldNotify = true
+                        }
+                    } else if (goal.reminderFrequency == "MONTHLY") {
+                        if (now.dayOfMonth == goal.reminderDayOfMonth && isPastTime) {
+                            shouldNotify = true
+                        }
+                    }
+
+                    if (shouldNotify) {
+                        createNotificationIfNotExists(
+                            "Nhắc nhở: ${goal.name}",
+                            "Đừng quên tiết kiệm cho mục tiêu ${goal.name} nhé!",
+                            startOfDay
+                        )
+                    }
+                }
+
+                // 2. LOGIC DEADLINE (Check lúc 9h sáng hoặc sau đó)
+                if (goal.currentAmount < goal.targetAmount && now.hour >= 9) {
+                    val daysLeft = ChronoUnit.DAYS.between(now.toLocalDate(), goal.deadline.toLocalDate())
+                    if (daysLeft in 0..3) {
+                        val title = "Sắp đến hạn: ${goal.name}"
+                        val msg = "Chỉ còn $daysLeft ngày nữa là đến hạn mục tiêu ${goal.name}."
+                        createNotificationIfNotExists(title, msg, startOfDay)
+                    }
+                }
+            }
+        }
+    }
+
+    // [MỚI] Hàm tạo thông báo (Kiểm tra xem hôm nay đã báo chưa)
+    private suspend fun createNotificationIfNotExists(title: String, message: String, startOfDay: LocalDateTime) {
+        // Kiểm tra trong DB xem hôm nay đã có thông báo tiêu đề này chưa
+        val count = database.notificationDao().checkExistsToday(title, startOfDay)
+
+        if (count == 0) {
+            // A. Lưu vào DB
+            val log = NotificationLog(
+                title = title,
+                message = message,
+                timestamp = LocalDateTime.now()
+            )
+            database.notificationDao().insert(log)
+
+            // B. Hiện thông báo lên thanh trạng thái
+            withContext(Dispatchers.Main) {
+                showSystemNotification(title, message)
+            }
+        }
+    }
+
+    // [MỚI] Hàm hiển thị UI thông báo (Copy từ Worker cũ sang)
+    private fun showSystemNotification(title: String, message: String) {
+        val channelId = "savings_reminder_channel"
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "Nhắc nhở tiết kiệm", NotificationManager.IMPORTANCE_DEFAULT)
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.drawable.ic_notifications) // Đảm bảo bạn có icon này
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
+        //notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+    }
+    private fun loadUserInfo() {
+        if (currentUsername.isNotEmpty()) {
+            lifecycleScope.launch {
+                currentUser = database.userDao().getUserByUsername(currentUsername)
+                currentUser?.let { user ->
+                    updateNavHeader(user)
+                }
+            }
+        }
+    }
+    private fun updateNavHeader(user: User) {
+        val headerView = navigationView.getHeaderView(0)
+        val tvUserName = headerView.findViewById<TextView>(R.id.tvUserName)
+        val tvUserEmail = headerView.findViewById<TextView>(R.id.tvUserEmail)
+        val imgAvatar = headerView.findViewById<ImageView>(R.id.imgAvatar)
+        val btnLogout = headerView.findViewById<ImageView>(R.id.btnLogout)
+
+        // Hiển thị tên (ưu tiên FullName, nếu không có thì dùng Username)
+        tvUserName.text = if (user.fullName.isNotBlank()) user.fullName else user.username
+
+        // Hiển thị Email (nếu chưa có thì gợi ý cập nhật)
+        tvUserEmail.text = if (user.email.isNotBlank()) user.email else "Cập nhật email ngay"
+
+        // Sự kiện Logout
+        btnLogout.setOnClickListener {
+            val intent = Intent(this, LoginActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        }
+
+        // Sự kiện Click Avatar -> Update Profile
+        imgAvatar.setOnClickListener {
+            showUpdateProfileDialog()
+        }
+    }
+
+    // [MỚI] Popup Cập nhật thông tin User
+    private fun showUpdateProfileDialog() {
+        val user = currentUser ?: return
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_update_profile, null)
+        val dialog = AlertDialog.Builder(this).setView(dialogView).create()
+
+        val etName = dialogView.findViewById<EditText>(R.id.etUpdateFullName)
+        val etEmail = dialogView.findViewById<EditText>(R.id.etUpdateEmail)
+        val etPass = dialogView.findViewById<EditText>(R.id.etUpdatePass)
+        val btnSave = dialogView.findViewById<Button>(R.id.btnUpdateSave)
+
+        // Fill dữ liệu hiện tại
+        etName.setText(user.fullName)
+        etEmail.setText(user.email)
+
+        btnSave.setOnClickListener {
+            val newName = etName.text.toString().trim()
+            val newEmail = etEmail.text.toString().trim()
+            val newPass = etPass.text.toString().trim()
+
+            // Tạo object user mới (giữ nguyên username)
+            val updatedUser = user.copy(
+                fullName = newName,
+                email = newEmail,
+                password = if (newPass.isNotEmpty()) newPass else user.password // Chỉ đổi pass nếu người dùng nhập
+            )
+
+            lifecycleScope.launch {
+                database.userDao().updateUser(updatedUser)
+                currentUser = updatedUser // Update biến tạm
+                updateNavHeader(updatedUser) // Update UI
+                Toast.makeText(this@MainActivity, "Cập nhật thành công!", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 }
