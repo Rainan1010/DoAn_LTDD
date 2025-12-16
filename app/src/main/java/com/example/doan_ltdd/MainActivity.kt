@@ -126,6 +126,11 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                     drawerLayout.closeDrawer(GravityCompat.START)
                 }
+                R.id.nav_statistics -> {
+                    val intent = Intent(this, StatisticsActivity::class.java)
+                    startActivity(intent)
+                    drawerLayout.closeDrawer(GravityCompat.START)
+                }
             }
             true
         }
@@ -382,16 +387,26 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
+        // Trong MainActivity.kt -> showDepositDialog
+
         btnConfirmDeposit.setOnClickListener {
             val amountStr = etDepositAmount.text.toString()
             if (amountStr.isNotBlank()) {
                 val amount = amountStr.toDouble()
-                goal.addDeposit(amount)
-                val log = DepositLog(goalId = goal.id, goalName = goal.name, amount = amount)
+
+                val updatedGoal = goal.copy(currentAmount = goal.currentAmount + amount)
+
+                val log = DepositLog(
+                    goalId = updatedGoal.id, // Dùng id của goal
+                    goalName = updatedGoal.name,
+                    amount = amount
+                )
 
                 lifecycleScope.launch {
-                    database.savingsDao().updateGoal(goal)
+                    // Update object mới vào DB
+                    database.savingsDao().updateGoal(updatedGoal)
                     database.savingsDao().insertLog(log)
+
                     dialog.dismiss()
                     Toast.makeText(this@MainActivity, "Nạp tiền thành công!", Toast.LENGTH_SHORT).show()
                 }
