@@ -3,19 +3,26 @@ package com.example.doan_ltdd
 import androidx.room.*
 
 @Dao
-interface UserDAO{
-    @Insert
-    suspend fun addUser(user: User)
+interface UserDAO {
+    // Đăng ký: Thêm user mới
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun registerUser(user: User)
 
-    @Delete
-    suspend fun deleteUser(user: User)
+    // Đăng nhập: Kiểm tra username và password
+    @Query("SELECT * FROM users WHERE username = :username AND password = :password")
+    suspend fun login(username: String, password: String): User?
 
+    // Kiểm tra user đã tồn tại chưa
+    @Query("SELECT COUNT(*) FROM users WHERE username = :username")
+    suspend fun checkUserExists(username: String): Int
+
+    // [QUAN TRỌNG] Bạn đang thiếu 2 hàm này:
+
+    // 1. Lấy thông tin user theo username
+    @Query("SELECT * FROM users WHERE username = :username")
+    suspend fun getUserByUsername(username: String): User?
+
+    // 2. Cập nhật thông tin user
     @Update
     suspend fun updateUser(user: User)
-
-    @Query("SELECT EXISTS(SELECT 1 FROM users WHERE username = :username)")
-    suspend fun isUsernameExists(username: String): Boolean
-
-    @Query("SELECT * FROM users WHERE username = :username AND password = :password LIMIT 1")
-    suspend fun getLoginUser(username: String, password: String): User?
 }
